@@ -42,7 +42,7 @@
     Author: Matt (CyberGuy)
     Repository: https://github.com/Matt-CyberGuy/MeshAzureSign
     License: MIT
-    Version: 1.0.3
+    Version: 1.0.4
 #>
 
 [CmdletBinding(DefaultParameterSetName='All')]
@@ -65,7 +65,7 @@ param(
 # ================================
 # SCRIPT VERSION
 # ================================
-$SCRIPT_VERSION = "1.0.3"
+$SCRIPT_VERSION = "1.0.4"
 
 # ================================
 # GLOBAL CONFIGURATION
@@ -88,7 +88,8 @@ $TOOLS_DIR = "$BASE_DIR\Tools"
 
 # Tool Paths
 $SIGNTOOL_PATH = "$TOOLS_DIR\signtool.exe"
-$DLIB_PATH = "$TOOLS_DIR\Azure.CodeSigning.Dlib.dll"
+$TOOLS_X64_DIR = "$TOOLS_DIR\x64"
+$DLIB_PATH = "$TOOLS_X64_DIR\Azure.CodeSigning.Dlib.dll"
 $MESHCTRL_JS_PATH = "$MESHCTRL_DIR\node_modules\meshcentral\meshctrl.js"
 
 # Configuration Files
@@ -278,7 +279,8 @@ function Initialize-Directories {
         $AGENTS_DIR,
         $LOGS_DIR,
         $CONFIG_DIR,
-        $TOOLS_DIR
+        $TOOLS_DIR,
+        $TOOLS_X64_DIR
     )
     
     foreach ($dir in $directories) {
@@ -517,18 +519,95 @@ function Install-Dependencies {
         Write-Log "SignTool already exists" -Level SUCCESS
     }
     
-    # Download Azure CodeSigning DLL
-    if (-not (Test-Path $DLIB_PATH)) {
-        Write-Log "Downloading Azure.CodeSigning.Dlib.dll..." -Level INFO
-        try {
-            Invoke-WebRequest -Uri "$REPO_BASE_URL/dependencies/Azure.CodeSigning.Dlib.dll" -OutFile $DLIB_PATH -UseBasicParsing
-            Write-Log "Azure DLL downloaded successfully" -Level SUCCESS
-        } catch {
-            Write-Log "Failed to download Azure DLL: $($_.Exception.Message)" -Level CRITICAL
-            throw "Failed to download Azure DLL"
+    # Download Azure CodeSigning DLLs and dependencies
+    Write-Log "Checking Azure CodeSigning dependencies..." -Level INFO
+    
+    # List of all required DLL files in x64 folder
+    $azureDlls = @(
+        'Azure.CodeSigning.Dlib.Core.dll',
+        'Azure.CodeSigning.Dlib.dll',
+        'Azure.CodeSigning.Dlib.runtimeconfig.json',
+        'Azure.CodeSigning.dll',
+        'Azure.Core.dll',
+        'Azure.Identity.dll',
+        'concrt140.dll',
+        'Ijwhost.dll',
+        'mfc140.dll',
+        'mfc140chs.dll',
+        'mfc140cht.dll',
+        'mfc140deu.dll',
+        'mfc140enu.dll',
+        'mfc140esn.dll',
+        'mfc140fra.dll',
+        'mfc140ita.dll',
+        'mfc140jpn.dll',
+        'mfc140kor.dll',
+        'mfc140rus.dll',
+        'mfc140u.dll',
+        'mfcm140.dll',
+        'mfcm140u.dll',
+        'Microsoft.Extensions.DependencyInjection.Abstractions.dll',
+        'Microsoft.Extensions.Logging.Abstractions.dll',
+        'Microsoft.Identity.Client.dll',
+        'Microsoft.Identity.Client.Extensions.Msal.dll',
+        'Microsoft.IdentityModel.Abstractions.dll',
+        'msvcp140_1.dll',
+        'msvcp140_2.dll',
+        'msvcp140_atomic_wait.dll',
+        'msvcp140_codecvt_ids.dll',
+        'msvcp140.dll',
+        'System.ClientModel.dll',
+        'System.Memory.Data.dll',
+        'System.Security.Cryptography.ProtectedData.dll',
+        'vcamp140.dll',
+        'vccorlib140.dll',
+        'vcomp140.dll',
+        'vcruntime140_1.dll',
+        'vcruntime140_threads.dll',
+        'vcruntime140.dll'
+    )
+    
+    $missingDlls = @()
+    foreach ($dll in $azureDlls) {
+        $dllPath = Join-Path $TOOLS_X64_DIR $dll
+        if (-not (Test-Path $dllPath)) {
+            $missingDlls += $dll
+        }
+    }
+    
+    if ($missingDlls.Count -gt 0) {
+        Write-Log "Downloading $($missingDlls.Count) Azure CodeSigning dependency file(s)..." -Level INFO
+        $downloadedCount = 0
+        $failedCount = 0
+        
+        foreach ($dll in $missingDlls) {
+            try {
+                $dllPath = Join-Path $TOOLS_X64_DIR $dll
+                $dllUrl = "$REPO_BASE_URL/dependencies/x64/$dll"
+                Write-Log "Downloading $dll..." -Level INFO
+                Invoke-WebRequest -Uri $dllUrl -OutFile $dllPath -UseBasicParsing -ErrorAction Stop
+                $downloadedCount++
+            } catch {
+                Write-Log "Failed to download $dll : $($_.Exception.Message)" -Level ERROR
+                $failedCount++
+            }
+        }
+        
+        if ($failedCount -gt 0) {
+            Write-Log "Failed to download $failedCount file(s). Some dependencies may be missing." -Level WARNING
+        }
+        
+        if ($downloadedCount -gt 0) {
+            Write-Log "Successfully downloaded $downloadedCount Azure CodeSigning dependency file(s)" -Level SUCCESS
+        }
+        
+        # Verify main DLL exists
+        if (-not (Test-Path $DLIB_PATH)) {
+            Write-Log "Critical: Azure.CodeSigning.Dlib.dll not found after download" -Level CRITICAL
+            throw "Failed to download Azure.CodeSigning.Dlib.dll"
         }
     } else {
-        Write-Log "Azure DLL already exists" -Level SUCCESS
+        Write-Log "All Azure CodeSigning dependencies already exist" -Level SUCCESS
     }
     
     # Install npm dependencies (minimist and ws)
