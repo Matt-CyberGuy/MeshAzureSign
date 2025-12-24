@@ -1106,9 +1106,16 @@ function Invoke-AzureCodeSigning {
         
         # Display output with proper formatting
         Write-Log "SignTool Output:" -Level INFO
+        Write-Log "Note: 'SHA1 hash' shown below is the certificate's hash (all certificates have both SHA1 and SHA256 hashes)." -Level INFO
+        Write-Log "The actual signing algorithm is SHA256 as specified by /fd SHA256 and /td SHA256." -Level INFO
+        
         $signOutput | ForEach-Object {
             $line = $_.ToString()
-            if ($line -match "Successfully signed") {
+            # Suppress or clarify SHA1 hash line to avoid confusion
+            if ($line -match "SHA1 hash:") {
+                Write-Log "Certificate SHA1 hash (informational only): $($line -replace '.*SHA1 hash:\s*', '')" -Level INFO
+                # Don't display this confusing line to console
+            } elseif ($line -match "Successfully signed") {
                 Write-Host $line -ForegroundColor Green
                 Write-Log $line -Level SUCCESS
             } elseif ($line -match "Error|Failed|SignerSign\(\) failed") {
@@ -1117,6 +1124,11 @@ function Invoke-AzureCodeSigning {
             } elseif ($line -match "WARNING") {
                 Write-Host $line -ForegroundColor Yellow
                 Write-Log $line -Level WARNING
+            } elseif ($line -match "certificate was selected") {
+                # Warn if local certificate is being selected instead of Azure
+                Write-Host $line -ForegroundColor Yellow
+                Write-Log $line -Level WARNING
+                Write-Log "WARNING: A local certificate appears to be selected. Azure Trusted Signing should be used instead." -Level WARNING
             } else {
                 Write-Host $line
                 Write-Log $line -Level INFO
@@ -1434,10 +1446,45 @@ Errors:               $($Script:Stats.Errors)
     Write-Log ([Environment]::NewLine + "Detailed log: $DETAILED_LOG") -Level INFO
     Write-Log "Executive summary: $EXECUTIVE_LOG" -Level INFO
     Write-Host ""
-    Write-Host "Script completed successfully!" -ForegroundColor Green
-    Write-Host ""
     
-    # Wait for user to read the success message before closing
+    # Determine if script actually succeeded based on errors and intended operations
+    $hasErrors = $Script:Stats.Errors -gt 0
+    $intendedWork = if ($Download -or (-not $Sign -and -not $Download)) {
+        # Download mode: check if downloads succeeded
+        $Script:Stats.AgentsDownloaded -gt 0 -or $Script:Stats.GroupsProcessed -gt 0
+    } elseif ($Sign) {
+        # Sign mode: check if signings succeeded
+        $Script:Stats.AgentsSigned -gt 0
+    } else {
+        # Full mode: check if both succeeded
+        ($Script:Stats.AgentsDownloaded -gt 0 -or $Script:Stats.AgentsSigned -gt 0)
+    }
+    
+    if ($hasErrors -and -not $intendedWork) {
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+        Write-Host "  SCRIPT COMPLETED WITH ERRORS" -ForegroundColor Red
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "The script encountered $($Script:Stats.Errors) error(s)." -ForegroundColor Yellow
+        Write-Host "Please review the error messages above and check the logs:" -ForegroundColor Yellow
+        Write-Host "  $DETAILED_LOG" -ForegroundColor White
+        Write-Host ""
+    } elseif ($hasErrors) {
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Yellow
+        Write-Host "  SCRIPT COMPLETED WITH WARNINGS" -ForegroundColor Yellow
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Some operations completed, but $($Script:Stats.Errors) error(s) occurred." -ForegroundColor Yellow
+        Write-Host "Please review the output above for details." -ForegroundColor Yellow
+        Write-Host ""
+    } else {
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+        Write-Host "  SCRIPT COMPLETED SUCCESSFULLY" -ForegroundColor Green
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
+        Write-Host ""
+    }
+    
+    # Wait for user to read the message before closing
     Wait-ForUser
     
 } catch {
