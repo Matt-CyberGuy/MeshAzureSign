@@ -231,6 +231,36 @@ function Add-ExecutiveEntry {
     }
 }
 
+function Wait-ForUser {
+    <#
+    .SYNOPSIS
+    Pauses script execution to allow user to read output before window closes.
+    Works in both interactive and non-interactive PowerShell sessions.
+    #>
+    Write-Host ""
+    Write-Host "Press any key to exit..." -ForegroundColor Gray
+    
+    # Check if we're in an interactive console session and not in a pipeline
+    if ($Host.Name -eq 'ConsoleHost' -and -not $MyInvocation.PipelinePosition) {
+        try {
+            # Check if we can read keys (interactive console)
+            if ($Host.UI.RawUI.KeyAvailable -eq $false) {
+                # Try to read a key (works in interactive console)
+                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            } else {
+                # Key already available, just wait a moment
+                Start-Sleep -Seconds 3
+            }
+        } catch {
+            # If ReadKey fails, wait a few seconds instead
+            Start-Sleep -Seconds 5
+        }
+    } else {
+        # Non-interactive session or pipeline execution, wait a few seconds
+        Start-Sleep -Seconds 5
+    }
+}
+
 # ================================
 # INITIALIZATION FUNCTIONS
 # ================================
@@ -944,6 +974,9 @@ Errors:               $($Script:Stats.Errors)
     Write-Host "Script completed successfully!" -ForegroundColor Green
     Write-Host ""
     
+    # Wait for user to read the success message before closing
+    Wait-ForUser
+    
 } catch {
     # Ensure error is always visible, even if logging hasn't been initialized
     Write-Host ""
@@ -968,6 +1001,9 @@ Errors:               $($Script:Stats.Errors)
     Write-Host ""
     Write-Host "Script execution failed. See error message above." -ForegroundColor Red
     Write-Host ""
+    
+    # Wait for user to read the error before closing
+    Wait-ForUser
     
     # Exit with error code
     exit 1
