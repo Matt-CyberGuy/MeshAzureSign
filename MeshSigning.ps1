@@ -707,8 +707,22 @@ function Initialize-Configuration {
             CertificateProfileName = $profileName
         }
         
-        $metadataData | ConvertTo-Json -Depth 10 | Set-Content $METADATA_FILE -Encoding UTF8
-        Write-Log "metadata.json created" -Level SUCCESS
+        # Save metadata.json without BOM (UTF-8 without Byte Order Mark)
+        # This is critical - BOM causes JSON parsing errors in Azure DLL
+        $jsonContent = $metadataData | ConvertTo-Json -Depth 10
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($METADATA_FILE, $jsonContent, $utf8NoBom)
+        Write-Log "metadata.json created (UTF-8 without BOM)" -Level SUCCESS
+    } else {
+        # Fix existing metadata.json if it has BOM - re-save without BOM
+        try {
+            $content = Get-Content -Path $METADATA_FILE -Raw
+            $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+            [System.IO.File]::WriteAllText($METADATA_FILE, $content, $utf8NoBom)
+            Write-Log "metadata.json verified/updated (UTF-8 without BOM)" -Level INFO
+        } catch {
+            Write-Log "Could not update metadata.json encoding: $($_.Exception.Message)" -Level WARNING
+        }
     }
     
     # Check for credentials.json
@@ -1165,19 +1179,20 @@ function Invoke-AzureCodeSigning {
         
         # Build SignTool command - EXACTLY matches working template
         # Using SHA256 for both file digest and timestamp digest
+        # Quote paths to handle spaces
         $signArgs = @(
             'sign',
             '/v',
             '/fd', 'SHA256',
-            '/tr', $TIMESTAMP_SERVER,
+            '/tr', "`"$TIMESTAMP_SERVER`"",
             '/td', 'SHA256',
-            '/dlib', $DLIB_PATH,
-            '/dmdf', $METADATA_FILE,
-            $FilePath
+            '/dlib', "`"$DLIB_PATH`"",
+            '/dmdf', "`"$METADATA_FILE`"",
+            "`"$FilePath`""
         )
         
         Write-Log "Executing SignTool with Azure Trusted Signing..." -Level INFO
-        Write-Log "Command: $SIGNTOOL_PATH sign /v /fd SHA256 /tr $TIMESTAMP_SERVER /td SHA256 /dlib $DLIB_PATH /dmdf $METADATA_FILE $FilePath" -Level INFO
+        Write-Log "Command: $SIGNTOOL_PATH sign /v /fd SHA256 /tr `"$TIMESTAMP_SERVER`" /td SHA256 /dlib `"$DLIB_PATH`" /dmdf `"$METADATA_FILE`" `"$FilePath`"" -Level INFO
         
         # Execute SignTool - capture both stdout and stderr
         $signOutput = & $SIGNTOOL_PATH $signArgs 2>&1
@@ -1369,7 +1384,15 @@ function Start-SignPhase {
             return
         }
         
-        foreach ($agent in $existingAgents) {
+        # Filter out ARM64 files (cannot be signed by SignTool)
+        $signableAgents = $existingAgents | Where-Object { $_.Name -notmatch '_ARM64\.exe$' }
+        $arm64Count = ($existingAgents | Where-Object { $_.Name -match '_ARM64\.exe$' }).Count
+        
+        if ($arm64Count -gt 0) {
+            Write-Log "Skipping $arm64Count ARM64 file(s) (SignTool does not support ARM64 PE files)" -Level INFO
+        }
+        
+        foreach ($agent in $signableAgents) {
             $hash = (Get-FileHash -Path $agent.FullName -Algorithm SHA256).Hash
             $AgentsToSign += @{
                 FilePath = $agent.FullName
@@ -1378,7 +1401,7 @@ function Start-SignPhase {
             }
         }
         
-        Write-Log "Found $($AgentsToSign.Count) agents to process" -Level SUCCESS
+        Write-Log "Found $($AgentsToSign.Count) signable agent(s) to process" -Level SUCCESS
     }
     
     foreach ($agent in $AgentsToSign) {
@@ -1387,6 +1410,14 @@ function Start-SignPhase {
         $hashBefore = $agent.Hash
         
         Write-Log ([Environment]::NewLine + "--- Checking signature: $fileName ---") -Level INFO
+        
+        # Skip ARM64 files - SignTool cannot sign ARM64 PE files
+        if ($fileName -match '_ARM64\.exe$') {
+            Write-Log "ARM64 files cannot be signed by SignTool. Skipping." -Level WARNING
+            Add-ExecutiveEntry -FileName $fileName -Hash $hashBefore -Status "ARM64 (Not Supported)" -Action "SKIPPED"
+            $Script:Stats.AgentsSkipped++
+            continue
+        }
         
         if (Test-CodeSignature -FilePath $filePath) {
             Write-Log "Agent already has valid signature. Skipping." -Level SUCCESS
