@@ -42,7 +42,7 @@
     Author: Matt (CyberGuy)
     Repository: https://github.com/Matt-CyberGuy/MeshAzureSign
     License: MIT
-    Version: 1.0.1
+    Version: 1.0.2
 #>
 
 [CmdletBinding(DefaultParameterSetName='All')]
@@ -61,6 +61,11 @@ param(
 )
 
 #Requires -Version 5.1
+
+# ================================
+# SCRIPT VERSION
+# ================================
+$SCRIPT_VERSION = "1.0.2"
 
 # ================================
 # GLOBAL CONFIGURATION
@@ -244,44 +249,19 @@ function Wait-ForUser {
     Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
     Write-Host ""
     
-    # Use a blocking loop that definitely won't exit
-    # This works even when run via irm | iex
-    $timeout = 300  # 5 minutes - plenty of time to read
-    $startTime = Get-Date
+    # Force output buffer flush
+    [Console]::Out.Flush()
     
-    Write-Host "Script will wait for 5 minutes (or until you close this window)" -ForegroundColor Yellow
-    Write-Host "Press Ctrl+C to exit immediately, or just wait..." -ForegroundColor Gray
-    Write-Host ""
-    
-    # Blocking loop - keeps checking for key or timeout
-    while ($true) {
-        $elapsed = ((Get-Date) - $startTime).TotalSeconds
-        $remaining = [Math]::Max(0, $timeout - $elapsed)
-        
-        if ($remaining -le 0) {
-            Write-Host "Timeout reached. Exiting..." -ForegroundColor Gray
-            break
-        }
-        
-        # Try to read a key if available
-        if ($Host.Name -eq 'ConsoleHost') {
-            try {
-                if ($Host.UI.RawUI.KeyAvailable) {
-                    $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-                    Write-Host "Key pressed. Exiting..." -ForegroundColor Gray
-                    break
-                }
-            } catch {
-                # Key reading not available, continue waiting
-            }
-        }
-        
-        # Show countdown every 10 seconds
-        if ([Math]::Floor($elapsed) % 10 -eq 0 -and $elapsed -gt 0) {
-            Write-Host "Still waiting... $([Math]::Floor($remaining)) seconds remaining (Press Ctrl+C to exit)" -ForegroundColor DarkGray
-        }
-        
-        Start-Sleep -Seconds 1
+    # Use Read-Host which is the most reliable blocking method
+    # It will wait indefinitely until user presses ENTER
+    try {
+        Write-Host "Press ENTER to exit..." -ForegroundColor Yellow
+        $null = Read-Host
+    } catch {
+        # If Read-Host fails (unlikely), use a very long sleep
+        Write-Host "Waiting 300 seconds (5 minutes) for you to read the output..." -ForegroundColor Yellow
+        Write-Host "You can close this window manually if needed." -ForegroundColor Gray
+        Start-Sleep -Seconds 300
     }
 }
 
@@ -836,39 +816,55 @@ function Update-AgentAge {
 function Get-MeshCentralGroups {
     Write-Log "Querying MeshCentral device groups..." -Level INFO
     
-    # Validate URL format before using it
-    if ($Script:MESHCENTRAL_SERVER -notmatch '^wss://') {
-        Write-Log "Invalid MeshCentral URL format detected" -Level ERROR
-        Write-Host ""
-        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
-        Write-Host "  URL FORMAT ERROR" -ForegroundColor Red
-        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
-        Write-Host ""
-        Write-Host "MeshCentral server URL must start with 'wss://' not 'https://'" -ForegroundColor Yellow
-        Write-Host "Current URL: $Script:MESHCENTRAL_SERVER" -ForegroundColor White
-        Write-Host ""
-        
-        # Try to auto-fix
-        if ($Script:MESHCENTRAL_SERVER -match '^https://') {
-            $fixedUrl = $Script:MESHCENTRAL_SERVER -replace '^https://', 'wss://'
-            Write-Host "Auto-fixing to: $fixedUrl" -ForegroundColor Cyan
-            $Script:MESHCENTRAL_SERVER = $fixedUrl
-            
-            # Update credentials file
-            try {
-                $creds = Get-Content $CREDENTIALS_FILE -Raw | ConvertFrom-Json
-                $creds.MeshCentral.ServerURL = $fixedUrl
-                $creds | ConvertTo-Json -Depth 10 | Set-Content $CREDENTIALS_FILE -Encoding UTF8
-                Write-Log "Updated credentials.json with corrected URL" -Level SUCCESS
-                Write-Host "Credentials file updated." -ForegroundColor Green
-            } catch {
-                Write-Host "Warning: Could not update credentials file automatically." -ForegroundColor Yellow
-            }
+        # Validate URL format before using it - CRITICAL CHECK
+        Write-Log "Validating MeshCentral server URL format..." -Level INFO
+        if ($Script:MESHCENTRAL_SERVER -notmatch '^wss://') {
+            Write-Log "Invalid MeshCentral URL format detected: $Script:MESHCENTRAL_SERVER" -Level ERROR
             Write-Host ""
-        } else {
-            throw "MeshCentral server URL must start with 'wss://'. Current URL: $Script:MESHCENTRAL_SERVER"
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host "  URL FORMAT ERROR" -ForegroundColor Red
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "MeshCentral server URL must start with 'wss://' not 'https://' or 'http://'" -ForegroundColor Yellow
+            Write-Host "Current URL: $Script:MESHCENTRAL_SERVER" -ForegroundColor White
+            Write-Host ""
+            
+            # Try to auto-fix
+            $fixedUrl = $null
+            if ($Script:MESHCENTRAL_SERVER -match '^https://') {
+                $fixedUrl = $Script:MESHCENTRAL_SERVER -replace '^https://', 'wss://'
+            } elseif ($Script:MESHCENTRAL_SERVER -match '^http://') {
+                $fixedUrl = $Script:MESHCENTRAL_SERVER -replace '^http://', 'wss://'
+            }
+            
+            if ($fixedUrl) {
+                Write-Host "Auto-fixing to: $fixedUrl" -ForegroundColor Cyan
+                $Script:MESHCENTRAL_SERVER = $fixedUrl
+                Write-Log "URL fixed to: $fixedUrl" -Level SUCCESS
+                
+                # Update credentials file
+                try {
+                    $creds = Get-Content $CREDENTIALS_FILE -Raw | ConvertFrom-Json
+                    $creds.MeshCentral.ServerURL = $fixedUrl
+                    $creds | ConvertTo-Json -Depth 10 | Set-Content $CREDENTIALS_FILE -Encoding UTF8
+                    Write-Log "Updated credentials.json with corrected URL" -Level SUCCESS
+                    Write-Host "Credentials file updated." -ForegroundColor Green
+                } catch {
+                    Write-Host "Warning: Could not update credentials file automatically." -ForegroundColor Yellow
+                    Write-Log "Failed to update credentials file: $($_.Exception.Message)" -Level WARNING
+                }
+                Write-Host ""
+            } else {
+                throw "MeshCentral server URL must start with 'wss://'. Current URL: $Script:MESHCENTRAL_SERVER"
+            }
         }
-    }
+        
+        # Final validation - ensure URL is correct
+        if ($Script:MESHCENTRAL_SERVER -notmatch '^wss://') {
+            throw "URL validation failed. URL must be wss:// format. Current: $Script:MESHCENTRAL_SERVER"
+        }
+        
+        Write-Log "URL validated: $Script:MESHCENTRAL_SERVER" -Level SUCCESS
     
     # Initialize output variable so it's available in catch block
     $output = $null
@@ -1291,10 +1287,27 @@ try {
     Write-Host "╔═══════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
     Write-Host "║                  MESHCENTRAL AZURE SIGNING TOOL                       ║" -ForegroundColor Cyan
     Write-Host "║                     https://github.com/Matt-CyberGuy/MeshAzureSign    ║" -ForegroundColor Cyan
+    Write-Host "║                              Version $SCRIPT_VERSION                              ║" -ForegroundColor Cyan
     Write-Host "╚═══════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
     
+    Write-Log "Script Version: $SCRIPT_VERSION" -Level INFO
     Write-Log "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -Level INFO
+    
+    # If running locally (not via irm | iex), copy script to C:\MeshSigning
+    $scriptPath = $MyInvocation.PSCommandPath
+    if ($scriptPath -and (Test-Path $scriptPath)) {
+        $targetPath = "$BASE_DIR\MeshSigning.ps1"
+        if ($scriptPath -ne $targetPath) {
+            Write-Log "Copying script to $targetPath for local execution..." -Level INFO
+            try {
+                Copy-Item -Path $scriptPath -Destination $targetPath -Force -ErrorAction Stop
+                Write-Log "Script copied successfully" -Level SUCCESS
+            } catch {
+                Write-Log "Could not copy script: $($_.Exception.Message)" -Level WARNING
+            }
+        }
+    }
     
     # Initialize environment
     Initialize-Directories
