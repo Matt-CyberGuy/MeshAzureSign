@@ -42,7 +42,7 @@
     Author: Matt (CyberGuy)
     Repository: https://github.com/Matt-CyberGuy/MeshAzureSign
     License: MIT
-    Version: 1.0.2
+    Version: 1.0.3
 #>
 
 [CmdletBinding(DefaultParameterSetName='All')]
