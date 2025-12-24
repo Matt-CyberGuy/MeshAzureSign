@@ -736,9 +736,9 @@ function Invoke-AzureCodeSigning {
 # ================================
 
 function Start-DownloadPhase {
-    Write-Log "`n========================================" -Level INFO
+    Write-Log ([Environment]::NewLine + "========================================") -Level INFO
     Write-Log "PHASE 1: DOWNLOADING AGENTS" -Level INFO
-    Write-Log "========================================`n" -Level INFO
+    Write-Log ("========================================" + [Environment]::NewLine) -Level INFO
     
     # Check if agents need updating
     $needsDownload = -not (Test-AgentAge)
@@ -765,7 +765,7 @@ function Start-DownloadPhase {
         $groupName = $group.name
         $meshId = $group._id -replace '^mesh//', ''
         
-        Write-Log "`n--- Processing Group: $groupName ---" -Level INFO
+        Write-Log ([Environment]::NewLine + "--- Processing Group: $groupName ---") -Level INFO
         Write-Log "Mesh ID: $meshId" -Level INFO
         
         $safeGroupName = ConvertTo-SafeFileName -GroupName $groupName
@@ -806,9 +806,9 @@ function Start-DownloadPhase {
 function Start-SignPhase {
     param([array]$AgentsToSign)
     
-    Write-Log "`n========================================" -Level INFO
+    Write-Log ([Environment]::NewLine + "========================================") -Level INFO
     Write-Log "PHASE 2: SIGNING AGENTS" -Level INFO
-    Write-Log "========================================`n" -Level INFO
+    Write-Log ("========================================" + [Environment]::NewLine) -Level INFO
     
     # If no agents provided, scan the Agents directory
     if ($AgentsToSign.Count -eq 0) {
@@ -837,7 +837,7 @@ function Start-SignPhase {
         $fileName = $agent.FileName
         $hashBefore = $agent.Hash
         
-        Write-Log "`n--- Checking signature: $fileName ---" -Level INFO
+        Write-Log ([Environment]::NewLine + "--- Checking signature: $fileName ---") -Level INFO
         
         if (Test-CodeSignature -FilePath $filePath) {
             Write-Log "Agent already has valid signature. Skipping." -Level SUCCESS
@@ -901,7 +901,7 @@ try {
     }
     
     # Display summary
-    Write-Log "`n========================================" -Level INFO
+    Write-Log ([Environment]::NewLine + "========================================") -Level INFO
     Write-Log "EXECUTION SUMMARY" -Level INFO
     Write-Log "========================================" -Level INFO
     Write-Log "Groups Processed:     $($Script:Stats.GroupsProcessed)" -Level INFO
@@ -928,14 +928,14 @@ Errors:               $($Script:Stats.Errors)
     
     Add-Content -Path $EXECUTIVE_LOG -Value $summaryText -ErrorAction SilentlyContinue
     
-    Write-Log "`nDetailed log: $DETAILED_LOG" -Level INFO
+    Write-Log ([Environment]::NewLine + "Detailed log: $DETAILED_LOG") -Level INFO
     Write-Log "Executive summary: $EXECUTIVE_LOG" -Level INFO
     Write-Host ""
     Write-Host "Script completed successfully!" -ForegroundColor Green
     Write-Host ""
     
 } catch {
-    Write-Log "`n[FATAL ERROR] $($_.Exception.Message)" -Level CRITICAL
+    Write-Log ([Environment]::NewLine + "[FATAL ERROR] $($_.Exception.Message)") -Level CRITICAL
     Write-Log "Script execution failed. Check logs for details." -Level CRITICAL
     Write-Host ""
     Write-Host "Script failed. See logs for details:" -ForegroundColor Red
