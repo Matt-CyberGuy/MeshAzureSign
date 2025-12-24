@@ -776,20 +776,87 @@ function Get-MeshCentralGroups {
             '--url', $Script:MESHCENTRAL_SERVER
         )
         
+        # Capture output (both stdout and stderr are merged with 2>&1)
         $output = & node $MESHCTRL_JS_PATH @meshctrlArgs 2>&1 | Out-String
         
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log "MeshCtrl command failed with exit code: $LASTEXITCODE" -Level ERROR
-            Write-Log "Raw output: $output" -Level ERROR
-            throw "Failed to query MeshCentral groups"
+        # Clean up the output - remove any leading/trailing whitespace
+        $output = $output.Trim()
+        
+        # Log the raw output for debugging
+        Write-Log "MeshCtrl raw output (first 500 chars): $($output.Substring(0, [Math]::Min(500, $output.Length)))" -Level INFO
+        
+        # Check for common error messages in output
+        if ($output -match "Invalid login|Invalid JSON|Error|Failed|Unauthorized|Authentication failed") {
+            Write-Log "MeshCtrl returned an error message" -Level ERROR
+            Write-Host ""
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host "  MESHCENTRAL CONNECTION ERROR" -ForegroundColor Red
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "MeshCtrl output:" -ForegroundColor Yellow
+            Write-Host $output -ForegroundColor White
+            Write-Host ""
+            
+            if ($output -match "Invalid login") {
+                Write-Host "Possible causes:" -ForegroundColor Yellow
+                Write-Host "  - Incorrect login key or username" -ForegroundColor White
+                Write-Host "  - Login key has expired" -ForegroundColor White
+                Write-Host "  - Server time is out of sync" -ForegroundColor White
+                Write-Host "  - Login token feature not enabled on MeshCentral server" -ForegroundColor White
+                Write-Host ""
+            }
+            
+            throw "MeshCentral authentication failed. Check your credentials in $CREDENTIALS_FILE"
         }
         
-        $groups = $output | ConvertFrom-Json
+        # Check if output is empty
+        if ([string]::IsNullOrWhiteSpace($output)) {
+            Write-Log "MeshCtrl returned empty output" -Level ERROR
+            throw "MeshCentral returned empty response. Check server URL and credentials."
+        }
+        
+        # Check if output looks like JSON (starts with [ or {)
+        if (-not ($output.Trim().StartsWith('[') -or $output.Trim().StartsWith('{'))) {
+            Write-Log "MeshCtrl output does not appear to be JSON" -Level ERROR
+            Write-Host ""
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host "  MESHCENTRAL RESPONSE ERROR" -ForegroundColor Red
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "MeshCtrl returned non-JSON output:" -ForegroundColor Yellow
+            Write-Host $output -ForegroundColor White
+            Write-Host ""
+            throw "MeshCentral returned invalid response. Output: $($output.Substring(0, [Math]::Min(200, $output.Length)))"
+        }
+        
+        # Try to parse as JSON
+        try {
+            $groups = $output | ConvertFrom-Json
+        } catch {
+            Write-Log "Failed to parse MeshCtrl output as JSON: $($_.Exception.Message)" -Level ERROR
+            Write-Host ""
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host "  JSON PARSING ERROR" -ForegroundColor Red
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "MeshCtrl output that failed to parse:" -ForegroundColor Yellow
+            Write-Host $output -ForegroundColor White
+            Write-Host ""
+            throw "Failed to parse MeshCentral response as JSON: $($_.Exception.Message)"
+        }
+        
+        # Validate we got an array
+        if ($groups -isnot [Array]) {
+            Write-Log "MeshCtrl returned non-array result" -Level ERROR
+            throw "MeshCentral returned unexpected data format. Expected array of groups."
+        }
+        
         Write-Log "Successfully retrieved $($groups.Count) device groups" -Level SUCCESS
         return $groups
         
     } catch {
         Write-Log "Exception during MeshCentral query: $($_.Exception.Message)" -Level CRITICAL
+        Write-Log "Full error details: $($_.Exception | Out-String)" -Level ERROR
         throw
     }
 }
