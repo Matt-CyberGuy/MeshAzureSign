@@ -767,6 +767,9 @@ function Update-AgentAge {
 function Get-MeshCentralGroups {
     Write-Log "Querying MeshCentral device groups..." -Level INFO
     
+    # Initialize output variable so it's available in catch block
+    $output = $null
+    
     try {
         $meshctrlArgs = @(
             'listdevicegroups',
@@ -776,14 +779,26 @@ function Get-MeshCentralGroups {
             '--url', $Script:MESHCENTRAL_SERVER
         )
         
+        Write-Log "Executing: node $MESHCTRL_JS_PATH listdevicegroups --json --loginkey [REDACTED] --loginuser $($Script:MESHCENTRAL_LOGIN_USER) --url $($Script:MESHCENTRAL_SERVER)" -Level INFO
+        
         # Capture output (both stdout and stderr are merged with 2>&1)
         $output = & node $MESHCTRL_JS_PATH @meshctrlArgs 2>&1 | Out-String
         
         # Clean up the output - remove any leading/trailing whitespace
         $output = $output.Trim()
         
-        # Log the raw output for debugging
-        Write-Log "MeshCtrl raw output (first 500 chars): $($output.Substring(0, [Math]::Min(500, $output.Length)))" -Level INFO
+        # Always log the raw output for debugging (show full output, not truncated)
+        $outputLength = if ($output) { $output.Length } else { 0 }
+        Write-Log "MeshCtrl raw output length: $outputLength characters" -Level INFO
+        if ($outputLength -gt 0) {
+            Write-Host ""
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host "  MESHCENTRAL RESPONSE (for debugging)" -ForegroundColor Cyan
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host $output -ForegroundColor White
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host ""
+        }
         
         # Check for common error messages in output
         if ($output -match "Invalid login|Invalid JSON|Error|Failed|Unauthorized|Authentication failed") {
@@ -856,6 +871,37 @@ function Get-MeshCentralGroups {
         
     } catch {
         Write-Log "Exception during MeshCentral query: $($_.Exception.Message)" -Level CRITICAL
+        
+        # If we have output captured, show it in the error
+        if ($output) {
+            Write-Host ""
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host "  MESHCENTRAL QUERY FAILED" -ForegroundColor Red
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "MeshCtrl returned the following output:" -ForegroundColor Yellow
+            Write-Host $output -ForegroundColor White
+            Write-Host ""
+            Write-Host "This output was not valid JSON or contained an error." -ForegroundColor Yellow
+            Write-Host ""
+            
+            # Provide specific guidance based on common errors
+            if ($output -match "Invalid login|Invalid JSON|Invalid") {
+                Write-Host "Troubleshooting steps:" -ForegroundColor Cyan
+                Write-Host "  1. Verify your MeshCentral server URL is correct" -ForegroundColor White
+                Write-Host "  2. Check that your login key is valid (160 hex characters)" -ForegroundColor White
+                Write-Host "  3. Ensure your username matches exactly" -ForegroundColor White
+                Write-Host "  4. Verify login tokens are enabled on your MeshCentral server" -ForegroundColor White
+                Write-Host "  5. Check that server time is synchronized" -ForegroundColor White
+                Write-Host ""
+                Write-Host "You can update credentials by editing:" -ForegroundColor Yellow
+                Write-Host "  $CREDENTIALS_FILE" -ForegroundColor White
+                Write-Host ""
+            }
+        }
+        
         Write-Log "Full error details: $($_.Exception | Out-String)" -Level ERROR
         throw
     }
