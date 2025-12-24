@@ -1,0 +1,6 @@
+# Placeholder file for Azure.CodeSigning.Dlib.dll
+# This file should be replaced with the actual Azure Trusted Signing DLL
+# Source: Azure Trusted Signing Client Tools
+# Install via: winget install -e --id Microsoft.Azure.TrustedSigningClientTools
+# Path after install: C:\Program Files\Azure CodeSigning\bin\x64\Azure.CodeSigning.Dlib.dll
+

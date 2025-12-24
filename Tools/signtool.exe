@@ -1,0 +1,5 @@
+# Placeholder file for signtool.exe
+# This file should be replaced with the actual Windows SDK SignTool executable
+# Source: Windows 10 SDK (version 10.0.22621.0 or later)
+# Path in SDK: C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe
+

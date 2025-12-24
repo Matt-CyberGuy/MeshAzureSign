@@ -1,0 +1,27 @@
+# Sensitive configuration files
+Config/credentials.json
+
+# Logs
+Logs/*.txt
+
+# Downloaded agents
+Agents/*.exe
+
+# Node modules
+meshctrl/node_modules/*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.log
+

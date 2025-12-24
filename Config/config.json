@@ -1,0 +1,7 @@
+{
+  "settings": {
+    "agentSignLock": true,
+    "agentTimeStampServer": "http://timestamp.acs.microsoft.com"
+  }
+}
+
