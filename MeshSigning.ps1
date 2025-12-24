@@ -65,7 +65,7 @@ param(
 # ================================
 # SCRIPT VERSION
 # ================================
-$SCRIPT_VERSION = "1.0.2"
+$SCRIPT_VERSION = "1.0.3"
 
 # ================================
 # GLOBAL CONFIGURATION
@@ -1084,7 +1084,8 @@ function Invoke-AzureCodeSigning {
         $env:AZURE_TENANT_ID = $Script:AZURE_TENANT_ID
         $env:AZURE_CLIENT_SECRET = $Script:AZURE_CLIENT_SECRET
         
-        # Build SignTool command - matches working interactive script
+        # Build SignTool command - EXACTLY matches working template
+        # Using SHA256 for both file digest and timestamp digest
         $signArgs = @(
             'sign',
             '/v',
@@ -1097,22 +1098,27 @@ function Invoke-AzureCodeSigning {
         )
         
         Write-Log "Executing SignTool with Azure Trusted Signing..." -Level INFO
+        Write-Log "Command: $SIGNTOOL_PATH sign /v /fd SHA256 /tr $TIMESTAMP_SERVER /td SHA256 /dlib $DLIB_PATH /dmdf $METADATA_FILE $FilePath" -Level INFO
         
-        # Execute SignTool
+        # Execute SignTool - capture both stdout and stderr
         $signOutput = & $SIGNTOOL_PATH $signArgs 2>&1
         $signExitCode = $LASTEXITCODE
         
-        # Display output
+        # Display output with proper formatting
         Write-Log "SignTool Output:" -Level INFO
         $signOutput | ForEach-Object {
             $line = $_.ToString()
             if ($line -match "Successfully signed") {
+                Write-Host $line -ForegroundColor Green
                 Write-Log $line -Level SUCCESS
-            } elseif ($line -match "Error|Failed") {
+            } elseif ($line -match "Error|Failed|SignerSign\(\) failed") {
+                Write-Host $line -ForegroundColor Red
                 Write-Log $line -Level ERROR
             } elseif ($line -match "WARNING") {
+                Write-Host $line -ForegroundColor Yellow
                 Write-Log $line -Level WARNING
             } else {
+                Write-Host $line
                 Write-Log $line -Level INFO
             }
         }
@@ -1120,25 +1126,59 @@ function Invoke-AzureCodeSigning {
         if ($signExitCode -eq 0) {
             Write-Log "Signing completed successfully for: $FilePath" -Level SUCCESS
             
-            # Verify signature was applied
+            # Verify signature was applied using SignTool verify
+            Write-Log "Verifying signature..." -Level INFO
             try {
+                $verifyArgs = @('verify', '/pa', '/v', $FilePath)
+                $verifyOutput = & $SIGNTOOL_PATH $verifyArgs 2>&1
+                $verifyExitCode = $LASTEXITCODE
+                
+                $verifyOutput | ForEach-Object {
+                    $line = $_.ToString()
+                    if ($line -match "Successfully verified") {
+                        Write-Host $line -ForegroundColor Green
+                        Write-Log $line -Level SUCCESS
+                    } elseif ($line -match "Error|Failed") {
+                        Write-Host $line -ForegroundColor Red
+                        Write-Log $line -Level WARNING
+                    } else {
+                        Write-Log $line -Level INFO
+                    }
+                }
+                
+                # Also check with PowerShell
                 $signature = Get-AuthenticodeSignature -FilePath $FilePath
                 Write-Log "Signature Status: $($signature.Status)" -Level INFO
-                Write-Log "Signer: $($signature.SignerCertificate.Subject)" -Level INFO
-                $Script:Stats.AgentsSigned++
-                return $true
+                if ($signature.SignerCertificate) {
+                    Write-Log "Signer: $($signature.SignerCertificate.Subject)" -Level INFO
+                }
+                
+                if ($signature.Status -eq 'Valid') {
+                    $Script:Stats.AgentsSigned++
+                    return $true
+                } else {
+                    Write-Log "Warning: Signature status is $($signature.Status), not Valid" -Level WARNING
+                    return $false
+                }
             } catch {
-                Write-Log "Warning: Could not verify signature details" -Level WARNING
-                return $true
+                Write-Log "Warning: Could not verify signature details: $($_.Exception.Message)" -Level WARNING
+                # Still return true if SignTool said it succeeded
+                if ($signExitCode -eq 0) {
+                    $Script:Stats.AgentsSigned++
+                    return $true
+                }
+                return $false
             }
         } else {
             Write-Log "Signing failed with exit code: $signExitCode" -Level ERROR
+            Write-Host "Signing failed. Check the output above for details." -ForegroundColor Red
             $Script:Stats.Errors++
             return $false
         }
         
     } catch {
         Write-Log "Exception during signing: $($_.Exception.Message)" -Level ERROR
+        Write-Host "Exception: $($_.Exception.Message)" -ForegroundColor Red
         $Script:Stats.Errors++
         return $false
     } finally {
@@ -1294,23 +1334,51 @@ try {
     Write-Log "Script Version: $SCRIPT_VERSION" -Level INFO
     Write-Log "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -Level INFO
     
-    # If running locally (not via irm | iex), copy script to C:\MeshSigning
+    # Initialize directories first (needed for script copy)
+    Initialize-Directories
+    
+    # Copy script to C:\MeshSigning\MeshSigning.ps1 (works for both local and irm | iex)
+    $targetPath = "$BASE_DIR\MeshSigning.ps1"
+    
+    # Try to get script content from various sources
+    $scriptContent = $null
+    
+    # Method 1: If running locally, get from PSCommandPath
     $scriptPath = $MyInvocation.PSCommandPath
     if ($scriptPath -and (Test-Path $scriptPath)) {
-        $targetPath = "$BASE_DIR\MeshSigning.ps1"
-        if ($scriptPath -ne $targetPath) {
-            Write-Log "Copying script to $targetPath for local execution..." -Level INFO
-            try {
-                Copy-Item -Path $scriptPath -Destination $targetPath -Force -ErrorAction Stop
-                Write-Log "Script copied successfully" -Level SUCCESS
-            } catch {
-                Write-Log "Could not copy script: $($_.Exception.Message)" -Level WARNING
-            }
+        try {
+            $scriptContent = Get-Content -Path $scriptPath -Raw -ErrorAction Stop
+            Write-Log "Found script at: $scriptPath" -Level INFO
+        } catch {
+            Write-Log "Could not read script from PSCommandPath: $($_.Exception.Message)" -Level WARNING
         }
     }
     
-    # Initialize environment
-    Initialize-Directories
+    # Method 2: If running via irm | iex, download from GitHub
+    if (-not $scriptContent) {
+        Write-Log "Script not found locally, downloading from GitHub..." -Level INFO
+        try {
+            $scriptContent = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/Matt-CyberGuy/MeshAzureSign/main/MeshSigning.ps1" -UseBasicParsing -ErrorAction Stop
+            Write-Log "Downloaded script from GitHub" -Level SUCCESS
+        } catch {
+            Write-Log "Could not download script from GitHub: $($_.Exception.Message)" -Level WARNING
+        }
+    }
+    
+    # Save script to C:\MeshSigning\MeshSigning.ps1
+    if ($scriptContent) {
+        try {
+            Set-Content -Path $targetPath -Value $scriptContent -Encoding UTF8 -Force -ErrorAction Stop
+            Write-Log "Script saved to: $targetPath" -Level SUCCESS
+            Write-Host "Script location: $targetPath" -ForegroundColor Cyan
+            Write-Host "You can run this script directly from: $targetPath" -ForegroundColor Cyan
+            Write-Host ""
+        } catch {
+            Write-Log "Could not save script to $targetPath : $($_.Exception.Message)" -Level WARNING
+        }
+    }
+    
+    # Initialize rest of environment
     Initialize-LogFiles
     Test-NodeJs
     Install-Dependencies
