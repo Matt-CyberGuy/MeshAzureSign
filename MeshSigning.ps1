@@ -239,37 +239,42 @@ function Wait-ForUser {
     Works in both interactive and non-interactive PowerShell sessions.
     #>
     Write-Host ""
-    Write-Host "Press any key to exit (or wait 30 seconds)..." -ForegroundColor Gray
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  SCRIPT PAUSED - READ OUTPUT ABOVE" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
     
-    # Always try to wait longer to ensure user can read the output
-    # Try interactive key read first, but have a long timeout as fallback
-    $keyPressed = $false
+    # Try Read-Host first (most reliable, works in most scenarios)
+    try {
+        Write-Host "Press ENTER to exit..." -ForegroundColor Yellow -NoNewline
+        $null = Read-Host
+        return
+    } catch {
+        # Read-Host failed, try alternative methods
+    }
     
+    # Fallback: Try key reading with long timeout
     if ($Host.Name -eq 'ConsoleHost') {
         try {
-            # Set a timeout for reading the key
-            $timeout = 30
+            Write-Host "Waiting for key press (or 60 seconds)..." -ForegroundColor Yellow
+            $timeout = 60
             $startTime = Get-Date
             
-            while (-not $keyPressed -and ((Get-Date) - $startTime).TotalSeconds -lt $timeout) {
+            while ((Get-Date) - $startTime).TotalSeconds -lt $timeout) {
                 if ($Host.UI.RawUI.KeyAvailable) {
                     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-                    $keyPressed = $true
-                } else {
-                    Start-Sleep -Milliseconds 100
+                    return
                 }
+                Start-Sleep -Milliseconds 200
             }
         } catch {
-            # If ReadKey fails, just wait
-            $keyPressed = $false
+            # Key reading failed
         }
     }
     
-    # If no key was pressed, wait the full timeout
-    if (-not $keyPressed) {
-        Write-Host "Waiting 30 seconds for you to read the output..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 30
-    }
+    # Final fallback: Long sleep
+    Write-Host "Waiting 60 seconds for you to read the output..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 60
 }
 
 # ================================
@@ -805,6 +810,40 @@ function Update-AgentAge {
 
 function Get-MeshCentralGroups {
     Write-Log "Querying MeshCentral device groups..." -Level INFO
+    
+    # Validate URL format before using it
+    if ($Script:MESHCENTRAL_SERVER -notmatch '^wss://') {
+        Write-Log "Invalid MeshCentral URL format detected" -Level ERROR
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+        Write-Host "  URL FORMAT ERROR" -ForegroundColor Red
+        Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "MeshCentral server URL must start with 'wss://' not 'https://'" -ForegroundColor Yellow
+        Write-Host "Current URL: $Script:MESHCENTRAL_SERVER" -ForegroundColor White
+        Write-Host ""
+        
+        # Try to auto-fix
+        if ($Script:MESHCENTRAL_SERVER -match '^https://') {
+            $fixedUrl = $Script:MESHCENTRAL_SERVER -replace '^https://', 'wss://'
+            Write-Host "Auto-fixing to: $fixedUrl" -ForegroundColor Cyan
+            $Script:MESHCENTRAL_SERVER = $fixedUrl
+            
+            # Update credentials file
+            try {
+                $creds = Get-Content $CREDENTIALS_FILE -Raw | ConvertFrom-Json
+                $creds.MeshCentral.ServerURL = $fixedUrl
+                $creds | ConvertTo-Json -Depth 10 | Set-Content $CREDENTIALS_FILE -Encoding UTF8
+                Write-Log "Updated credentials.json with corrected URL" -Level SUCCESS
+                Write-Host "Credentials file updated." -ForegroundColor Green
+            } catch {
+                Write-Host "Warning: Could not update credentials file automatically." -ForegroundColor Yellow
+            }
+            Write-Host ""
+        } else {
+            throw "MeshCentral server URL must start with 'wss://'. Current URL: $Script:MESHCENTRAL_SERVER"
+        }
+    }
     
     # Initialize output variable so it's available in catch block
     $output = $null
