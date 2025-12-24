@@ -275,20 +275,30 @@ function Test-NodeJs {
     Write-Log "Checking for Node.js..." -Level INFO
     
     try {
-        $nodeVersion = node --version 2>$null
-        if ($nodeVersion) {
+        $nodeVersion = & node --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and $nodeVersion) {
             Write-Log "Node.js found: $nodeVersion" -Level SUCCESS
             return $true
         }
-    } catch {}
+    } catch {
+        # Node.js not found
+    }
     
     Write-Log "Node.js not found!" -Level CRITICAL
     Write-Host ""
-    Write-Host "Node.js is required but not installed." -ForegroundColor Red
-    Write-Host "Please install Node.js from: https://nodejs.org/" -ForegroundColor Yellow
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+    Write-Host "  NODE.JS REQUIRED" -ForegroundColor Red
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Node.js is required but not installed." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Please install Node.js from:" -ForegroundColor Yellow
+    Write-Host "  https://nodejs.org/" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "After installation, restart PowerShell and run this script again." -ForegroundColor Yellow
-    exit 1
+    Write-Host ""
+    
+    throw "Node.js is required but not installed. Please install from https://nodejs.org/"
 }
 
 function Install-Dependencies {
@@ -935,11 +945,30 @@ Errors:               $($Script:Stats.Errors)
     Write-Host ""
     
 } catch {
-    Write-Log ([Environment]::NewLine + "[FATAL ERROR] $($_.Exception.Message)") -Level CRITICAL
-    Write-Log "Script execution failed. Check logs for details." -Level CRITICAL
+    # Ensure error is always visible, even if logging hasn't been initialized
     Write-Host ""
-    Write-Host "Script failed. See logs for details:" -ForegroundColor Red
-    Write-Host "  $DETAILED_LOG" -ForegroundColor Yellow
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+    Write-Host "  FATAL ERROR" -ForegroundColor Red
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
     Write-Host ""
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host ""
+    
+    # Try to log if logging is available
+    if (Test-Path $LOGS_DIR -ErrorAction SilentlyContinue) {
+        try {
+            Write-Log ([Environment]::NewLine + "[FATAL ERROR] $($_.Exception.Message)") -Level CRITICAL
+            Write-Log "Script execution failed. Check logs for details." -Level CRITICAL
+            Write-Host "Detailed log: $DETAILED_LOG" -ForegroundColor Yellow
+        } catch {
+            # If logging fails, at least we showed the error above
+        }
+    }
+    
+    Write-Host ""
+    Write-Host "Script execution failed. See error message above." -ForegroundColor Red
+    Write-Host ""
+    
+    # Exit with error code
     exit 1
 }
