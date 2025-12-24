@@ -159,6 +159,7 @@ ONE-LINE INSTALLER:
 
 FIRST-TIME SETUP:
     The script will automatically:
+    - Install Node.js if not present (via winget, Chocolatey, or direct download)
     - Create directory structure under C:\MeshSigning\
     - Download required dependencies (SignTool, Azure DLL, npm modules)
     - Prompt for configuration values
@@ -166,9 +167,9 @@ FIRST-TIME SETUP:
 
 REQUIREMENTS:
     - Windows 10/11 or Windows Server 2016+
-    - Node.js installed
     - Internet connection
     - Azure Trusted Signing account
+    - Administrator privileges (for Node.js installation if needed)
 
 DIRECTORY STRUCTURE:
     C:\MeshSigning\
@@ -301,6 +302,163 @@ Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     Add-Content -Path $EXECUTIVE_LOG -Value $separator -ErrorAction SilentlyContinue
 }
 
+function Install-NodeJs {
+    <#
+    .SYNOPSIS
+    Automatically installs Node.js using the best available method.
+    #>
+    Write-Log "Attempting to install Node.js automatically..." -Level INFO
+    Write-Host ""
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  INSTALLING NODE.JS" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+    
+    # Method 1: Try winget (Windows 11/10 with App Installer)
+    Write-Log "Trying winget (Windows Package Manager)..." -Level INFO
+    try {
+        $wingetPath = Get-Command winget -ErrorAction SilentlyContinue
+        if ($wingetPath) {
+            Write-Log "Found winget, installing Node.js..." -Level INFO
+            Write-Host "Installing Node.js via winget (this may take a few minutes)..." -ForegroundColor Yellow
+            
+            $process = Start-Process -FilePath "winget" -ArgumentList "install", "OpenJS.NodeJS.LTS", "--silent", "--accept-package-agreements", "--accept-source-agreements" -Wait -PassThru -NoNewWindow
+            
+            if ($process.ExitCode -eq 0) {
+                Write-Log "Node.js installed successfully via winget" -Level SUCCESS
+                Write-Host "Node.js installed successfully!" -ForegroundColor Green
+                Write-Host ""
+                
+                # Refresh PATH environment variable
+                Write-Log "Refreshing PATH environment variable..." -Level INFO
+                $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                
+                # Wait a moment for PATH to propagate
+                Start-Sleep -Seconds 2
+                
+                # Verify installation
+                try {
+                    $nodeVersion = & node --version 2>&1
+                    if ($LASTEXITCODE -eq 0 -and $nodeVersion) {
+                        Write-Log "Node.js verified: $nodeVersion" -Level SUCCESS
+                        return $true
+                    }
+                } catch {
+                    Write-Log "Node.js installed but not yet available in PATH. Please restart PowerShell." -Level WARNING
+                    Write-Host "Node.js has been installed, but you may need to restart PowerShell for it to be available." -ForegroundColor Yellow
+                    Write-Host "Please close this window, open a new PowerShell window, and run the script again." -ForegroundColor Yellow
+                    return $false
+                }
+            } else {
+                Write-Log "winget installation failed with exit code: $($process.ExitCode)" -Level WARNING
+            }
+        }
+    } catch {
+        Write-Log "winget not available: $($_.Exception.Message)" -Level WARNING
+    }
+    
+    # Method 2: Try Chocolatey
+    Write-Log "Trying Chocolatey..." -Level INFO
+    try {
+        $chocoPath = Get-Command choco -ErrorAction SilentlyContinue
+        if ($chocoPath) {
+            Write-Log "Found Chocolatey, installing Node.js..." -Level INFO
+            Write-Host "Installing Node.js via Chocolatey (this may take a few minutes)..." -ForegroundColor Yellow
+            
+            $process = Start-Process -FilePath "choco" -ArgumentList "install", "nodejs-lts", "-y" -Wait -PassThru -NoNewWindow -Verb RunAs
+            
+            if ($process.ExitCode -eq 0) {
+                Write-Log "Node.js installed successfully via Chocolatey" -Level SUCCESS
+                Write-Host "Node.js installed successfully!" -ForegroundColor Green
+                Write-Host ""
+                
+                # Refresh PATH
+                $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                Start-Sleep -Seconds 2
+                
+                # Verify installation
+                try {
+                    $nodeVersion = & node --version 2>&1
+                    if ($LASTEXITCODE -eq 0 -and $nodeVersion) {
+                        Write-Log "Node.js verified: $nodeVersion" -Level SUCCESS
+                        return $true
+                    }
+                } catch {
+                    Write-Log "Node.js installed but not yet available in PATH. Please restart PowerShell." -Level WARNING
+                    Write-Host "Node.js has been installed, but you may need to restart PowerShell for it to be available." -ForegroundColor Yellow
+                    return $false
+                }
+            }
+        }
+    } catch {
+        Write-Log "Chocolatey not available: $($_.Exception.Message)" -Level WARNING
+    }
+    
+    # Method 3: Direct download and install MSI
+    Write-Log "Trying direct download and install..." -Level INFO
+    try {
+        Write-Host "Downloading Node.js installer..." -ForegroundColor Yellow
+        
+        # Get latest LTS version download URL
+        $nodeUrl = "https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi"
+        $installerPath = "$env:TEMP\nodejs-installer.msi"
+        
+        Invoke-WebRequest -Uri $nodeUrl -OutFile $installerPath -UseBasicParsing
+        
+        Write-Host "Installing Node.js (this may take a few minutes)..." -ForegroundColor Yellow
+        Write-Host "Please wait..." -ForegroundColor Gray
+        
+        # Install silently
+        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru -NoNewWindow
+        
+        # Clean up installer
+        Remove-Item $installerPath -ErrorAction SilentlyContinue
+        
+        if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) {
+            Write-Log "Node.js installed successfully via MSI" -Level SUCCESS
+            Write-Host "Node.js installed successfully!" -ForegroundColor Green
+            Write-Host ""
+            
+            # Refresh PATH
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+            Start-Sleep -Seconds 3
+            
+            # Verify installation
+            try {
+                $nodeVersion = & node --version 2>&1
+                if ($LASTEXITCODE -eq 0 -and $nodeVersion) {
+                    Write-Log "Node.js verified: $nodeVersion" -Level SUCCESS
+                    return $true
+                }
+            } catch {
+                Write-Log "Node.js installed but not yet available in PATH. Please restart PowerShell." -Level WARNING
+                Write-Host "Node.js has been installed, but you may need to restart PowerShell for it to be available." -ForegroundColor Yellow
+                return $false
+            }
+        } else {
+            Write-Log "MSI installation failed with exit code: $($process.ExitCode)" -Level ERROR
+        }
+    } catch {
+        Write-Log "Direct download/install failed: $($_.Exception.Message)" -Level ERROR
+    }
+    
+    # If all methods failed
+    Write-Host ""
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+    Write-Host "  AUTOMATIC INSTALLATION FAILED" -ForegroundColor Red
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Could not automatically install Node.js." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Please install Node.js manually from:" -ForegroundColor Yellow
+    Write-Host "  https://nodejs.org/" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "After installation, restart PowerShell and run this script again." -ForegroundColor Yellow
+    Write-Host ""
+    
+    return $false
+}
+
 function Test-NodeJs {
     Write-Log "Checking for Node.js..." -Level INFO
     
@@ -314,21 +472,29 @@ function Test-NodeJs {
         # Node.js not found
     }
     
-    Write-Log "Node.js not found!" -Level CRITICAL
+    Write-Log "Node.js not found!" -Level WARNING
     Write-Host ""
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
-    Write-Host "  NODE.JS REQUIRED" -ForegroundColor Red
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Node.js is required but not installed." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Please install Node.js from:" -ForegroundColor Yellow
-    Write-Host "  https://nodejs.org/" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "After installation, restart PowerShell and run this script again." -ForegroundColor Yellow
+    Write-Host "Node.js is not installed. Attempting automatic installation..." -ForegroundColor Yellow
     Write-Host ""
     
-    throw "Node.js is required but not installed. Please install from https://nodejs.org/"
+    # Try to install automatically
+    $installSuccess = Install-NodeJs
+    
+    if ($installSuccess) {
+        # Verify one more time after installation
+        try {
+            $nodeVersion = & node --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and $nodeVersion) {
+                Write-Log "Node.js verified after installation: $nodeVersion" -Level SUCCESS
+                return $true
+            }
+        } catch {
+            # Still not available, but installed
+        }
+    }
+    
+    # If installation failed or Node.js still not available
+    throw "Node.js is required but could not be installed automatically. Please install manually from https://nodejs.org/"
 }
 
 function Install-Dependencies {
