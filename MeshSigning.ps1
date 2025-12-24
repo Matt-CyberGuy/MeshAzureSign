@@ -239,26 +239,36 @@ function Wait-ForUser {
     Works in both interactive and non-interactive PowerShell sessions.
     #>
     Write-Host ""
-    Write-Host "Press any key to exit..." -ForegroundColor Gray
+    Write-Host "Press any key to exit (or wait 30 seconds)..." -ForegroundColor Gray
     
-    # Check if we're in an interactive console session and not in a pipeline
-    if ($Host.Name -eq 'ConsoleHost' -and -not $MyInvocation.PipelinePosition) {
+    # Always try to wait longer to ensure user can read the output
+    # Try interactive key read first, but have a long timeout as fallback
+    $keyPressed = $false
+    
+    if ($Host.Name -eq 'ConsoleHost') {
         try {
-            # Check if we can read keys (interactive console)
-            if ($Host.UI.RawUI.KeyAvailable -eq $false) {
-                # Try to read a key (works in interactive console)
-                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-            } else {
-                # Key already available, just wait a moment
-                Start-Sleep -Seconds 3
+            # Set a timeout for reading the key
+            $timeout = 30
+            $startTime = Get-Date
+            
+            while (-not $keyPressed -and ((Get-Date) - $startTime).TotalSeconds -lt $timeout) {
+                if ($Host.UI.RawUI.KeyAvailable) {
+                    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                    $keyPressed = $true
+                } else {
+                    Start-Sleep -Milliseconds 100
+                }
             }
         } catch {
-            # If ReadKey fails, wait a few seconds instead
-            Start-Sleep -Seconds 5
+            # If ReadKey fails, just wait
+            $keyPressed = $false
         }
-    } else {
-        # Non-interactive session or pipeline execution, wait a few seconds
-        Start-Sleep -Seconds 5
+    }
+    
+    # If no key was pressed, wait the full timeout
+    if (-not $keyPressed) {
+        Write-Host "Waiting 30 seconds for you to read the output..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 30
     }
 }
 
@@ -684,6 +694,35 @@ function Load-Configuration {
         $Script:AZURE_CLIENT_ID = $creds.Azure.ClientID
         $Script:AZURE_TENANT_ID = $creds.Azure.TenantID
         $Script:AZURE_CLIENT_SECRET = $creds.Azure.ClientSecret
+        
+        # Validate and fix MeshCentral server URL format
+        if ($Script:MESHCENTRAL_SERVER -notmatch '^wss://') {
+            Write-Log "MeshCentral server URL format issue detected" -Level WARNING
+            Write-Host ""
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Yellow
+            Write-Host "  URL FORMAT WARNING" -ForegroundColor Yellow
+            Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "MeshCentral server URL should start with 'wss://' not 'https://'" -ForegroundColor Yellow
+            Write-Host "Current URL: $Script:MESHCENTRAL_SERVER" -ForegroundColor White
+            Write-Host ""
+            
+            # Try to auto-fix if it's https://
+            if ($Script:MESHCENTRAL_SERVER -match '^https://') {
+                $fixedUrl = $Script:MESHCENTRAL_SERVER -replace '^https://', 'wss://'
+                Write-Host "Auto-fixing to: $fixedUrl" -ForegroundColor Cyan
+                $Script:MESHCENTRAL_SERVER = $fixedUrl
+                
+                # Update the credentials file with the fixed URL
+                $creds.MeshCentral.ServerURL = $fixedUrl
+                $creds | ConvertTo-Json -Depth 10 | Set-Content $CREDENTIALS_FILE -Encoding UTF8
+                Write-Log "Updated credentials.json with corrected URL" -Level SUCCESS
+                Write-Host "Credentials file updated. Continuing..." -ForegroundColor Green
+                Write-Host ""
+            } else {
+                throw "MeshCentral server URL must start with 'wss://'. Current URL: $Script:MESHCENTRAL_SERVER"
+            }
+        }
         
         Write-Log "Configuration loaded successfully" -Level SUCCESS
         return $true
